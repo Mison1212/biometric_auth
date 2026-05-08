@@ -38,6 +38,10 @@ dependencies:
   # Autentikasi biometrik (sidik jari, wajah, PIN perangkat)
   local_auth: ^2.3.0
   local_auth_android: ^1.0.44
+my_button_lib:
+  git:
+    url: https://github.com/Mison1212/Flutter-Library.git
+    ref: main
 
 dev_dependencies:
   flutter_test:
