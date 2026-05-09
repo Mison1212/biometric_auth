@@ -13,12 +13,14 @@ class LoginPage extends StatefulWidget {
 
 enum _AuthMethod { face, fingerprint, password }
 
-class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMixin {
-  final BiometricService _service = BiometricService();
+class _LoginPageState extends State<LoginPage>
+    with SingleTickerProviderStateMixin {
+  // PERBAIKAN 1: Gunakan .instance karena constructor-nya private
+  final BiometricService _service = BiometricService.instance;
+
   _AuthMethod? _activeMethod;
   bool _isLoading = false;
   String? _errorMessage;
-  BiometricErrorCode? _errorCode;
   List<_AuthMethod> _availableMethods = [];
 
   late final AnimationController _pulseController;
@@ -44,26 +46,33 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   }
 
   Future<void> _init() async {
-    final types = await _service.getAvailableBiometrics();
-    
-    final List<_AuthMethod> methods = [];
-    if (types.contains(BiometricType.face) || types.contains(BiometricType.weak)) {
-      methods.add(_AuthMethod.face);
-    }
-    if (types.contains(BiometricType.fingerprint) || types.contains(BiometricType.strong)) {
-      methods.add(_AuthMethod.fingerprint);
-    }
-    methods.add(_AuthMethod.password);
+    try {
+      final types = await LocalAuthentication().getAvailableBiometrics();
+      final List<_AuthMethod> methods = [];
 
-    setState(() {
-      _availableMethods = methods;
-      // Default ke biometrik pertama jika ada
-      if (methods.isNotEmpty && methods.first != _AuthMethod.password) {
-        _activeMethod = methods.first;
-      } else {
-        _activeMethod = _AuthMethod.password;
+      if (types.contains(BiometricType.face) ||
+          types.contains(BiometricType.weak)) {
+        methods.add(_AuthMethod.face);
       }
-    });
+      if (types.contains(BiometricType.fingerprint) ||
+          types.contains(BiometricType.strong)) {
+        methods.add(_AuthMethod.fingerprint);
+      }
+      methods.add(_AuthMethod.password);
+
+      if (mounted) {
+        setState(() {
+          _availableMethods = methods;
+          if (methods.isNotEmpty && methods.first != _AuthMethod.password) {
+            _activeMethod = methods.first;
+          } else {
+            _activeMethod = _AuthMethod.password;
+          }
+        });
+      }
+    } catch (e) {
+      // Handle error inisialisasi jika diperlukan
+    }
   }
 
   Future<void> _handleBiometricAuth() async {
@@ -71,25 +80,15 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       _isLoading = true;
       _errorMessage = null;
     });
-    _pulseController.repeat(reverse: false);
-    try {
-      String hint = 'Tempelkan jari atau arahkan wajah';
-      if (_activeMethod == _AuthMethod.face) {
-        hint = 'Arahkan wajah ke kamera';
-      } else if (_activeMethod == _AuthMethod.fingerprint) {
-        hint = 'Sentuh sensor sidik jari';
-      }
+    _pulseController.repeat(reverse: true); // Gunakan reverse agar smooth
 
+    // ... inside _handleBiometricAuth ...
+    try {
+      // Pastikan memanggil sesuai parameter yang ada di BiometricService
       final success = await _service.authenticate(
-        biometricOnly: true,
-        authMessages: [
-          AndroidAuthMessages(
-            signInTitle: 'Verifikasi Diperlukan',
-            cancelButton: 'Batal',
-            biometricHint: hint,
-          ),
-        ],
+        localizedReason: 'Gunakan biometrik untuk masuk ke aplikasi',
       );
+
       if (success && mounted) {
         Navigator.pushReplacementNamed(context, '/home');
       }
@@ -97,9 +96,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       _handleError(e);
     } finally {
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        setState(() => _isLoading = false);
         _pulseController.stop();
         _pulseController.reset();
       }
@@ -109,8 +106,10 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   void _handleError(BiometricException e) {
     setState(() {
       _errorMessage = e.userMessage;
-      _errorCode = e.code;
-      if (e.requiresFallback) {
+
+      // Jika terkunci permanen atau hardware tidak ada, pindah ke metode Password
+      if (e.code == BiometricErrorCode.biometricLockout ||
+          e.code == BiometricErrorCode.noBiometricHardware) {
         _activeMethod = _AuthMethod.password;
       }
     });
@@ -133,11 +132,15 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
           children: [
             const Icon(Icons.lock_outline, size: 80, color: Colors.white70),
             const SizedBox(height: 40),
+
+            // Area Utama (Biometrik atau Password)
             if (_activeMethod != _AuthMethod.password) ...[
               GestureDetector(
                 onTap: _isLoading ? null : _handleBiometricAuth,
                 child: ScaleTransition(
-                  scale: _isLoading ? _pulseAnim : const AlwaysStoppedAnimation(1.0),
+                  scale: _isLoading
+                      ? _pulseAnim
+                      : const AlwaysStoppedAnimation(1.0),
                   child: Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
@@ -146,7 +149,9 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                       border: Border.all(color: Colors.white24, width: 2),
                     ),
                     child: Icon(
-                      _activeMethod == _AuthMethod.face ? Icons.face : Icons.fingerprint,
+                      _activeMethod == _AuthMethod.face
+                          ? Icons.face
+                          : Icons.fingerprint,
                       size: 60,
                       color: Colors.white,
                     ),
@@ -169,7 +174,10 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                       decoration: InputDecoration(
                         hintText: 'Password',
                         hintStyle: const TextStyle(color: Colors.white54),
-                        prefixIcon: const Icon(Icons.password, color: Colors.white70),
+                        prefixIcon: const Icon(
+                          Icons.password,
+                          color: Colors.white70,
+                        ),
                         filled: true,
                         fillColor: Colors.white10,
                         border: OutlineInputBorder(
@@ -180,12 +188,16 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                     ),
                     const SizedBox(height: 20),
                     ElevatedButton(
-                      onPressed: () => Navigator.pushReplacementNamed(context, '/home'),
+                      onPressed: () =>
+                          Navigator.pushReplacementNamed(context, '/home'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.tealAccent.shade700,
                         foregroundColor: Colors.black87,
                         minimumSize: const Size(double.infinity, 50),
-                        shape: RoundedRectangle_circular(12),
+                        // PERBAIKAN 2: Gunakan RoundedRectangleBorder standar
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                       child: const Text('MASUK'),
                     ),
@@ -193,29 +205,47 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                 ),
               ),
             ],
+
+            // Pesan Error
             if (_errorMessage != null)
               Padding(
-                padding: const EdgeInsets.all(20.0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 40,
+                  vertical: 20,
+                ),
                 child: Text(
                   _errorMessage!,
-                  style: const TextStyle(color: Colors.orangeAccent),
+                  style: const TextStyle(
+                    color: Colors.orangeAccent,
+                    fontWeight: FontWeight.w500,
+                  ),
                   textAlign: TextAlign.center,
                 ),
               ),
+
             const SizedBox(height: 40),
+
+            // Selector Metode Login
             if (_availableMethods.length > 1)
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: _availableMethods.map((method) {
+                  final bool isActive = _activeMethod == method;
                   return IconButton(
                     icon: Icon(
                       method == _AuthMethod.password
                           ? Icons.keyboard
-                          : (method == _AuthMethod.face ? Icons.face : Icons.fingerprint),
+                          : (method == _AuthMethod.face
+                                ? Icons.face
+                                : Icons.fingerprint),
                     ),
-                    color: _activeMethod == method ? Colors.tealAccent : Colors.white54,
+                    color: isActive ? Colors.tealAccent : Colors.white54,
+                    iconSize: isActive ? 32 : 24,
                     onPressed: () {
-                      setState(() => _activeMethod = method);
+                      setState(() {
+                        _activeMethod = method;
+                        _errorMessage = null; // Reset error saat ganti metode
+                      });
                       if (method != _AuthMethod.password && !_isLoading) {
                         _handleBiometricAuth();
                       }
@@ -227,10 +257,5 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         ),
       ),
     );
-  }
-
-  // Helper for rounded corners because I made a typo in my thought process probably
-  RoundedRectangleBorder RoundedRectangle_circular(double radius) {
-    return RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius));
   }
 }
